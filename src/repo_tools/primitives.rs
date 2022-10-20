@@ -1,0 +1,306 @@
+use crate::prelude::*;
+use hex::FromHexError;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::convert::TryInto;
+use std::path::Path;
+use std::path::PathBuf;
+use tokio::fs;
+use tokio::io::AsyncReadExt;
+use tracing::info;
+use url::Url;
+use vg_errortools::{fat_io_wrap_tokio, FatIOError};
+
+const SIZE_PREFIX: &str = "size";
+const VERSION_PREFIX: &str = "version";
+const OID_PREFIX: &str = "oid";
+const FILE_HEADER: &str = "version https://git-lfs.github.com/spec/v1";
+
+/// Finds the git repository root folder of the given file
+pub async fn get_repo_root<P: AsRef<Path>>(file_or_path: P) -> Result<PathBuf, LFSError> {
+    info!(
+        "Searching git repo root from path {}",
+        file_or_path.as_ref().to_string_lossy()
+    );
+    let repo_dir = fs::canonicalize(file_or_path.as_ref()).await.map_err(|e| {
+        LFSError::DirectoryTraversalError(format!(
+            "Problem getting the absolute path of {}: {}",
+            file_or_path.as_ref().to_string_lossy(),
+            e.to_string().as_str()
+        ))
+    })?;
+    let components: Vec<_> = repo_dir.components().collect();
+    for i in (0..components.len()).rev() {
+        let path = components
+            .iter()
+            .take(i)
+            .fold(PathBuf::new(), |a, b| a.join(b));
+        if path.join(".git").exists() {
+            return Ok(path);
+        }
+    }
+
+    Err(LFSError::DirectoryTraversalError(format!(
+        "Could not find .git in any parent path of the given path ({})",
+        file_or_path.as_ref().to_string_lossy()
+    )))
+}
+
+#[derive(PartialEq, Eq, Debug)]
+pub enum Hash {
+    SHA256,
+    Other,
+}
+
+#[derive(Debug)]
+pub struct MetaData {
+    pub version: String,
+    pub oid: String,
+    pub size: usize,
+    pub hash: Option<Hash>,
+}
+
+pub async fn parse_lfs_file<P: AsRef<Path>>(path: P) -> Result<MetaData, LFSError> {
+    let contents = fat_io_wrap_tokio(path, fs::read_to_string).await?;
+    parse_lfs_string(contents.as_str())
+}
+
+fn parse_lfs_string(input: &str) -> Result<MetaData, LFSError> {
+    let lines: HashMap<_, _> = input
+        .lines()
+        .map(|line| line.split(' ').collect::<Vec<_>>())
+        .filter_map(|split_line| Some((*split_line.first()?, *split_line.last()?)))
+        .collect();
+
+    let size = lines
+        .get(SIZE_PREFIX)
+        .ok_or("Could not find size entry")?
+        .parse::<usize>()
+        .map_err(|_| "Could not convert file size to usize")?;
+
+    let version = *lines
+        .get(VERSION_PREFIX)
+        .ok_or("Could not find version-entry")?;
+
+    let mut oid = *lines.get(OID_PREFIX).ok_or("Could not find oid-entry")?;
+
+    let mut hash = None;
+    if oid.contains(':') {
+        let lines: Vec<_> = oid.split(':').collect();
+        if lines.first().ok_or("Problem parsing oid entry for hash")? == &"sha256" {
+            hash = Some(Hash::SHA256);
+        } else {
+            hash = Some(Hash::Other);
+        }
+        oid = *lines.last().ok_or("Problem parsing oid entry for oid")?;
+    }
+
+    Ok(MetaData {
+        size,
+        oid: oid.to_string(),
+        hash,
+        version: version.to_string(),
+    })
+}
+
+fn url_with_auth(url: &str, access_token: Option<&str>) -> Result<Url, LFSError> {
+    let mut url = Url::parse(url)?;
+    let username = if access_token.is_some() { "oauth2" } else { "" };
+    let result = url.set_username(username);
+    assert!(result.is_ok());
+    let result = url.set_password(access_token);
+    assert!(result.is_ok());
+    Ok(url)
+}
+
+pub async fn download_file(
+    meta_data: &MetaData,
+    repo_remote_url: &str,
+    access_token: Option<&str>,
+) -> Result<bytes::Bytes, LFSError> {
+    const MEDIA_TYPE: &str = "application/vnd.git-lfs+json";
+    // TODO because of gitlab this was switched from header based to url based auth check 2c4d745939f0daf4ba7a8ad77bb9158a21a3e051
+    // for how to do the header based auth later
+
+    let client = Client::builder().build()?;
+
+    assert_eq!(meta_data.hash, Some(Hash::SHA256));
+    // we are implementing git-lfs batch API here: https://github.com/git-lfs/git-lfs/blob/main/docs/api/batch.md
+    let request = json!({
+        "operation": "download",
+        "transfers": [ "basic" ],
+        "ref": {"name" : "refs/heads/main" },
+        "objects": vec!{Object::from_metadata(meta_data)},
+        "hash_algo": "sha256"
+    });
+
+    let request_url = repo_remote_url.to_owned() + "/info/lfs/objects/batch";
+    let request_url = url_with_auth(&request_url, access_token)?;
+    let response = client
+        .post(request_url.clone())
+        .header("Accept", MEDIA_TYPE)
+        .header("Content-Type", MEDIA_TYPE)
+        .json(&request)
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        println!(
+            "Failed to request git lfs actions with status code {} and body {}",
+            response.status(),
+            response.text().await?,
+        );
+        // TODO make LFSError::AcessDenied here for 401 and a generic error for the other cases
+        return Err(LFSError::ChecksumMismatch);
+    }
+    let parsed_result = response.json::<ApiResult>().await?;
+
+    // download already, this could be moved out and made async
+    let object = parsed_result
+        .objects
+        .first()
+        .ok_or(LFSError::RemoteFileNotFound(
+            "Empty object list response from LFS server",
+        ))?;
+
+    let action = object.actions.as_ref().ok_or(LFSError::RemoteFileNotFound(
+        "No action received from LFS server",
+    ))?;
+
+    let url = url_with_auth(&action.download.href, access_token)?;
+    let headers: http::HeaderMap = (&action.download.header).try_into()?;
+    let download_request_builder = client.get(url).headers(headers);
+    let response = download_request_builder.send().await?;
+    let download_status = response.status();
+    if !download_status.is_success() {
+        let message = format!(
+            "Download failed: {} - body {}",
+            download_status,
+            response.text().await.unwrap_or_default()
+        );
+        return Err(LFSError::InvalidResponse(message));
+    }
+    let bytes = response.bytes().await?;
+    if !check_hash(&bytes, &object.oid)? {
+        return Err(LFSError::ChecksumMismatch);
+    }
+    Ok(bytes)
+}
+
+fn check_hash(bytes: &bytes::Bytes, checksum: &str) -> Result<bool, FromHexError> {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let result = hasher.finalize();
+    let hex_data = hex::decode(checksum.as_bytes())?;
+    Ok(result[..] == hex_data)
+}
+
+pub async fn is_lfs_node_file<P: AsRef<Path>>(path: P) -> Result<bool, LFSError> {
+    if path.as_ref().is_dir() {
+        return Ok(false);
+    }
+    let mut reader = fat_io_wrap_tokio(&path, fs::File::open).await?;
+    let mut buf: Vec<u8> = Vec::new();
+    buf.resize(FILE_HEADER.len(), 0);
+    let read_result = reader.read_exact(buf.as_mut_slice()).await;
+    if let Err(e) = read_result {
+        match e.kind() {
+            std::io::ErrorKind::UnexpectedEof => Ok(false),
+            _ => Err(LFSError::FatFileIOError(FatIOError::from_std_io_err(
+                e,
+                path.as_ref().to_path_buf(),
+            ))),
+        }
+    } else {
+        Ok(buf == FILE_HEADER.as_bytes())
+    }
+}
+
+#[derive(Deserialize, Debug)]
+struct ApiResult {
+    objects: Vec<Object>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+struct Object {
+    oid: String,
+    size: usize,
+    actions: Option<Action>,
+    authenticated: Option<bool>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+struct Action {
+    download: Download,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+struct Download {
+    href: String,
+    header: HashMap<String, String>,
+}
+
+impl Object {
+    fn from_metadata(input: &MetaData) -> Self {
+        Object {
+            oid: input.oid.clone(),
+            size: input.size,
+            actions: None,
+            authenticated: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    const URL: &str = "https://dev.azure.com/rohdealx/devops/_git/git-lfs-test";
+    use super::*;
+    const LFS_TEST_DATA: &str = r#"version https://git-lfs.github.com/spec/v1
+oid sha256:4329aab31bc9c72a897f57e038fe60655d31df6e5ddf2cf897669a845d64edbc
+size 665694"#;
+    #[test]
+    fn test_parsing_of_string() {
+        let parsed = parse_lfs_string(LFS_TEST_DATA).expect("Could not parse demo-string!");
+        assert_eq!(parsed.size, 665694);
+        assert_eq!(parsed.version, "https://git-lfs.github.com/spec/v1");
+        assert_eq!(
+            parsed.oid,
+            "4329aab31bc9c72a897f57e038fe60655d31df6e5ddf2cf897669a845d64edbc"
+        );
+        assert_eq!(parsed.hash, Some(Hash::SHA256));
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn try_pull_from_demo_repo() {
+        let parsed = parse_lfs_string(LFS_TEST_DATA).expect("Could not parse demo-string!");
+        let bytes = download_file(&parsed, URL, None)
+            .await
+            .expect("could not read bytes");
+        assert_eq!(bytes.len(), parsed.size);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn identify_lfs_file() {
+        let lfs_test_file_name = "test.lfs.file";
+        fs::write(lfs_test_file_name, LFS_TEST_DATA)
+            .await
+            .expect("Unable to write file");
+        let result = is_lfs_node_file(lfs_test_file_name)
+            .await
+            .expect("File was not readable");
+        fs::remove_file(lfs_test_file_name)
+            .await
+            .expect("Could not clean up file");
+        assert!(result);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn identify_not_lfs_file() {
+        let current_file_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(file!());
+        let result = is_lfs_node_file(current_file_path)
+            .await
+            .expect("File was not readable");
+        assert!(!result);
+    }
+}
