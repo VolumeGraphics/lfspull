@@ -7,6 +7,7 @@ authors = ["Volume Graphics GmbH"]
 repository = "https://github.com/VolumeGraphics/lfspull"
 homepage = "https://github.com/VolumeGraphics/lfspull"
 documentation = "https://docs.rs/lfspull"
+description = "A simple git lfs file pulling implementation in pure rust. Can only pull files / folders and only support token-auth for now."
 
 [dependencies]
 clap = { version = "4.0.17", features = ["derive", "env"] }
