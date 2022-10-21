@@ -3,6 +3,10 @@ name = "lfspull"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+authors = ["Volume Graphics GmbH"]
+repository = "https://github.com/VolumeGraphics/lfspull"
+homepage = "https://github.com/VolumeGraphics/lfspull"
+documentation = "https://docs.rs/lfspull"
 
 [dependencies]
 clap = { version = "4.0.17", features = ["derive", "env"] }
