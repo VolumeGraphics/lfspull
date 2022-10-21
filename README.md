@@ -1,6 +1,7 @@
 # LFSPull - a simple pulling tool for git-lfs
 [![Documentation](https://docs.rs/lfspull/badge.svg)](https://docs.rs/lfspull)
 ![CI](https://github.com/VolumeGraphics/lfspull/actions/workflows/rust.yml/badge.svg?branch=main "CI")
+[![Coverage Status](https://coveralls.io/repos/github/VolumeGraphics/lfspull/badge.svg?branch=main)](https://coveralls.io/github/VolumeGraphics/lfspull?branch=main)
 
 ## Features
 LFSPull allows you to pull files from git-lfs. 
