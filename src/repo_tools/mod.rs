@@ -253,7 +253,6 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    const REPO_REMOTE: &str = "ssh://git@gitlab.volumegraphics.com:2222/development/vg.git";
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn current_repo_remote_url_correct() {
         let current_file_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(file!());
@@ -271,7 +270,8 @@ mod tests {
         assert!(Url::parse(&repo_remote).is_ok());
     }
 
-    const REPO_REMOTE_HTTPS: &str = "https://gitlab.volumegraphics.com/development/vg.git";
+    const REPO_REMOTE: &str = "ssh://git@github.com/VolumeGraphics/lfspull.git";
+    const REPO_REMOTE_HTTPS: &str = "https://github.com/VolumeGraphics/lfspull.git";
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn current_repo_remote_https_transform_works() {
         let repo_url_https =
