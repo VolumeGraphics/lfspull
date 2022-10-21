@@ -123,11 +123,7 @@ pub async fn download_file(
     access_token: Option<&str>,
 ) -> Result<bytes::Bytes, LFSError> {
     const MEDIA_TYPE: &str = "application/vnd.git-lfs+json";
-    // TODO because of gitlab this was switched from header based to url based auth check 2c4d745939f0daf4ba7a8ad77bb9158a21a3e051
-    // for how to do the header based auth later
-
     let client = Client::builder().build()?;
-
     assert_eq!(meta_data.hash, Some(Hash::SHA256));
     // we are implementing git-lfs batch API here: https://github.com/git-lfs/git-lfs/blob/main/docs/api/batch.md
     let request = json!({
