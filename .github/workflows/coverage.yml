@@ -13,6 +13,10 @@ jobs:
         profile: minimal
         toolchain: nightly
         override: true
+    
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
         
     - name: Run grcov
       env:
