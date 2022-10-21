@@ -1,5 +1,6 @@
 use crate::prelude::*;
 use hex::FromHexError;
+use http::StatusCode;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -147,13 +148,17 @@ pub async fn download_file(
         .send()
         .await?;
     if !response.status().is_success() {
+        let status = response.status();
         println!(
             "Failed to request git lfs actions with status code {} and body {}",
-            response.status(),
+            status,
             response.text().await?,
         );
-        // TODO make LFSError::AcessDenied here for 401 and a generic error for the other cases
-        return Err(LFSError::ChecksumMismatch);
+        return if status == StatusCode::FORBIDDEN || status == StatusCode::UNAUTHORIZED {
+            Err(LFSError::AccessDenied)
+        } else {
+            Err(LFSError::ResponseNotOkay(format!("{}", status)))
+        };
     }
     let parsed_result = response.json::<ApiResult>().await?;
 

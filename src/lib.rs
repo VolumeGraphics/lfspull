@@ -27,6 +27,12 @@ pub mod prelude {
     #[derive(thiserror::Error, Debug)]
     /// Errors that can happen during pulling the file
     pub enum LFSError {
+        /// We received 401 or 403 from the lfs server
+        #[error("Remote server responded with 401 or 403")]
+        AccessDenied,
+        /// We received 401 or 403 from the lfs server
+        #[error("Remote server responded with not-okay code: {0}")]
+        ResponseNotOkay(String),
         /// Some IO error happened, `FatFileIOError` does store a PathBuf to the source of the problem
         #[error("File IO error: {0}")]
         FatFileIOError(#[from] FatIOError),
