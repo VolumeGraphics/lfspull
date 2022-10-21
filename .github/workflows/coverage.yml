@@ -21,7 +21,7 @@ jobs:
     - name: Run grcov
       env:
          PROJECT_NAME: "<your_project_name>"
-         RUSTFLAGS: "-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code  ks=off"
+         RUSTFLAGS: "-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code"
          CARGO_INCREMENTAL: 0
       run: |
          cargo build --verbose
