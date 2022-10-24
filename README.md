@@ -1,7 +1,9 @@
 # LFSPull - a simple pulling tool for git-lfs
+[![Crates.io](https://img.shields.io/crates/d/lfspull?style=flat)](https://crates.io/crates/lfspull)
 [![Documentation](https://docs.rs/lfspull/badge.svg)](https://docs.rs/lfspull)
 ![CI](https://github.com/VolumeGraphics/lfspull/actions/workflows/rust.yml/badge.svg?branch=main "CI")
 [![Coverage Status](https://coveralls.io/repos/github/VolumeGraphics/lfspull/badge.svg?branch=main)](https://coveralls.io/github/VolumeGraphics/lfspull?branch=main)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat)](LICENSE-MIT)
 
 ## Features
 LFSPull allows you to pull files from git-lfs. 
