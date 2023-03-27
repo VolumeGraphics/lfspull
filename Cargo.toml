@@ -10,18 +10,18 @@ documentation = "https://docs.rs/lfspull"
 description = "A simple git lfs file pulling implementation in pure rust. Can only pull files / folders and only support token-auth for now."
 
 [dependencies]
-clap = { version = "4.0.17", features = ["derive", "env"] }
-thiserror = "1.0"
+clap = { version = "4.1", features = ["derive", "env"] }
+thiserror = "1"
 reqwest = { version="0.11" , features = ["json"] }
 http = "0.2"
 serde = {version ="1.0", features=['derive']}
 serde_json = "1.0"
-bytes = "1.1"
+bytes = "1.4"
 sha2 = "0.10"
 hex = "0.4"
 glob = "0.3"
-url = "2.2"
-tokio = { version = "1.17", features = ["macros", "rt-multi-thread", "fs"] }
+url = "2.3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 vg_errortools = {version="0.1.0", features = ["tokio"]}
