@@ -50,8 +50,10 @@ pub async fn main() -> Result<(), LFSError> {
     if let Some(recurse_pattern) = args.recurse_pattern {
         info!("Glob-recurse mode: {}", &recurse_pattern);
         let results = lfspull::glob_recurse_pull_directory(&recurse_pattern, access_token).await?;
-        results.into_iter().for_each(|(n, r)| {
-            info!("{n}: {r}");
+        info!("Pulling finished! Listing files and sources: ");
+
+        results.into_iter().enumerate().for_each(|(id, (n, r))| {
+            info!("{id} - '{n}': {r}");
         });
     }
     Ok(())
