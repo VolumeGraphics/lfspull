@@ -3,7 +3,7 @@
 [![Documentation](https://docs.rs/lfspull/badge.svg)](https://docs.rs/lfspull)
 ![CI](https://github.com/VolumeGraphics/lfspull/actions/workflows/rust.yml/badge.svg?branch=main "CI")
 [![Coverage Status](https://coveralls.io/repos/github/VolumeGraphics/lfspull/badge.svg?branch=main)](https://coveralls.io/github/VolumeGraphics/lfspull?branch=main)
-[![License](https://img.shields.io/badge/license-MIT-blue?style=flat)](LICENSE-MIT)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat)](LICENSE)
 
 ## Features
 LFSPull allows you to pull files from git-lfs. 
@@ -23,6 +23,7 @@ The CLI is pretty straight forward.
   - e.g. 'lfspull -r "*.tgz"' downloads all .tgz files in this folder
   - e.g. 'lfspull -r "**/*.tgz"' downloads all .tgz files this folder and all subfolders
 - '-a / --access-token [TOKEN]' sets the token - can also be set via $ACCESS_TOKEN from env
+- '-v' for verbose mode
 
 ## Library API guide
 

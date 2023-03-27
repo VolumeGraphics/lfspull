@@ -11,6 +11,7 @@ mod repo_tools;
 
 /// The prelude to set everything up for calling any crate functions
 pub mod prelude {
+    use std::fmt::{Display, Formatter};
     use vg_errortools::FatIOError;
 
     /// This enum specifies the source of the file that has been placed inside the repository.
@@ -22,6 +23,16 @@ pub mod prelude {
         UsedLocalCache,
         /// File was already pulled
         WasAlreadyPresent,
+    }
+
+    impl Display for FilePullMode {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            match self {
+                FilePullMode::DownloadedFromRemote => write!(f, "Downloaded from lfs server"),
+                FilePullMode::UsedLocalCache => write!(f, "Taken from local cache"),
+                FilePullMode::WasAlreadyPresent => write!(f, "File already pulled"),
+            }
+        }
     }
 
     #[derive(thiserror::Error, Debug)]

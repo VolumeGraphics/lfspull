@@ -1,6 +1,6 @@
 [package]
 name = "lfspull"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 authors = ["Volume Graphics GmbH"]
@@ -25,12 +25,13 @@ tokio = { version = "1.17", features = ["macros", "rt-multi-thread", "fs"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 vg_errortools = {version="0.1.0", features = ["tokio"]}
+enable-ansi-support = "0.2"
 
 
 [dev-dependencies]
-cucumber = "0.15.1"
-tokio = { version = "1.17", features = ["macros", "rt-multi-thread", "time"] }
-uuid = { version = "1.2.1", features = ["serde", "v4"] }
+cucumber = "0.19.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+uuid = { version = "1.2", features = ["serde", "v4"] }
 
 [[test]]
 name = "lfspull"

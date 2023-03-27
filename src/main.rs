@@ -17,25 +17,42 @@ struct Args {
     /// A recursive pull pattern with asterisks (e.g. /path/to/repo/**/*.jpg)
     #[clap(short, long)]
     recurse_pattern: Option<String>,
+
+    /// Print debug information
+    #[clap(short, long)]
+    verbose: bool,
 }
 
 #[tokio::main]
 pub async fn main() -> Result<(), LFSError> {
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::TRACE)
-        .finish();
+    // enable colors on windows cmd.exe
+    // does not fail on powershell, even though powershell can do colors without this
+    // will fail on jenkins/qa tough, that's why we need to ignore the result
+    let _ = enable_ansi_support::enable_ansi_support();
+
+    let args = Args::parse();
+    let level = if args.verbose {
+        Level::TRACE
+    } else {
+        Level::INFO
+    };
+
+    let subscriber = FmtSubscriber::builder().with_max_level(level).finish();
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-    let args = Args::parse();
     let access_token = args.access_token.as_deref();
     if let Some(file) = args.file_to_pull {
         info!("Single file mode: {}", file.to_string_lossy());
-        lfspull::pull_file(file, access_token).await?;
+        let result = lfspull::pull_file(file, access_token).await?;
+        info!("Result: {}", result);
     }
     if let Some(recurse_pattern) = args.recurse_pattern {
         info!("Glob-recurse mode: {}", &recurse_pattern);
-        lfspull::glob_recurse_pull_directory(&recurse_pattern, access_token).await?;
+        let results = lfspull::glob_recurse_pull_directory(&recurse_pattern, access_token).await?;
+        results.into_iter().for_each(|(n, r)| {
+            info!("{n}: {r}");
+        });
     }
     Ok(())
 }
