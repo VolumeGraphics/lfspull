@@ -27,6 +27,7 @@ tracing-subscriber = "0.3"
 vg_errortools = {version="0.1.0", features = ["tokio"]}
 enable-ansi-support = "0.2"
 futures-util = "0.3.30"
+tempfile = "3.12"
 
 [dev-dependencies]
 cucumber = "0.19.1"

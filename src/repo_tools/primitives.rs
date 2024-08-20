@@ -7,11 +7,12 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::convert::TryInto;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use tempfile::NamedTempFile;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWriteExt;
 use tracing::{debug, info};
 use url::Url;
 use vg_errortools::{fat_io_wrap_tokio, FatIOError};
@@ -118,23 +119,24 @@ fn url_with_auth(url: &str, access_token: Option<&str>) -> Result<Url, LFSError>
     Ok(url)
 }
 
-//no need for tempfile crate
-pub(crate) struct TempFile {
-    pub(crate) path: PathBuf,
-    pub(crate) file: fs::File,
-}
-
-impl Drop for TempFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
+// //no need for tempfile crate
+// pub(crate) struct TempFile {
+//     pub(crate) path: PathBuf,
+//     pub(crate) file: fs::File,
+// }
+//
+// impl Drop for TempFile {
+//     fn drop(&mut self) {
+//         let _ = std::fs::remove_file(&self.path);
+//     }
+// }
 
 pub async fn download_file(
     meta_data: &MetaData,
     repo_remote_url: &str,
     access_token: Option<&str>,
-) -> Result<TempFile, LFSError> {
+    randomizer_bytes: Option<usize>,
+) -> Result<NamedTempFile, LFSError> {
     const MEDIA_TYPE: &str = "application/vnd.git-lfs+json";
     let client = Client::builder().build()?;
     assert_eq!(meta_data.hash, Some(Hash::SHA256));
@@ -199,29 +201,37 @@ pub async fn download_file(
 
     debug!("creating temp file in current dir");
 
-    let temp_path = PathBuf::from("./").join(format!("{}.lfstmp", &meta_data.oid));
-    if temp_path.exists() {
+    const TEMP_SUFFIX: &str = ".lfstmp";
+    const TEMP_FOLDER: &str = "./";
+    let tmp_path = PathBuf::from(TEMP_FOLDER).join(format!("{}{TEMP_SUFFIX}", &meta_data.oid));
+    if randomizer_bytes.is_none() && tmp_path.exists() {
         debug!("temp file exists. Deleting");
-        fat_io_wrap_tokio(&temp_path, fs::remove_file).await?;
+        fat_io_wrap_tokio(&tmp_path, fs::remove_file).await?;
     }
-    let mut temp_file = TempFile {
-        file: fs::File::create(&temp_path)
-            .await
-            .map_err(|e| LFSError::TempFile(e.to_string()))?,
-        path: temp_path,
-    };
+    let temp_file = tempfile::Builder::new()
+        .prefix(&meta_data.oid)
+        .suffix(TEMP_SUFFIX)
+        .rand_bytes(randomizer_bytes.unwrap_or_default())
+        .tempfile_in(TEMP_FOLDER)
+        .map_err(|e| LFSError::TempFile(e.to_string()))?;
 
     let mut hasher = Sha256::new();
     let mut stream = response.bytes_stream();
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result?;
-        temp_file.file.write_all(&chunk).await.map_err(|e| {
-            LFSError::FatFileIOError(FatIOError::from_std_io_err(e, temp_file.path.clone()))
+        temp_file.as_file().write_all(&chunk).map_err(|e| {
+            LFSError::FatFileIOError(FatIOError::from_std_io_err(
+                e,
+                temp_file.path().to_path_buf(),
+            ))
         })?;
         hasher.update(chunk);
     }
-    temp_file.file.flush().await.map_err(|e| {
-        LFSError::FatFileIOError(FatIOError::from_std_io_err(e, temp_file.path.clone()))
+    temp_file.as_file().flush().map_err(|e| {
+        LFSError::FatFileIOError(FatIOError::from_std_io_err(
+            e,
+            temp_file.path().to_path_buf(),
+        ))
     })?;
 
     debug!("checking hash");
@@ -312,13 +322,12 @@ size 665694"#;
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn try_pull_from_demo_repo() {
         let parsed = parse_lfs_string(LFS_TEST_DATA).expect("Could not parse demo-string!");
-        let temp_file = download_file(&parsed, URL, None)
+        let temp_file = download_file(&parsed, URL, None, None)
             .await
             .expect("could not download file");
         let temp_size = temp_file
-            .file
+            .as_file()
             .metadata()
-            .await
             .expect("could not get temp file size")
             .len();
         assert_eq!(temp_size as usize, parsed.size);

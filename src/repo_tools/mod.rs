@@ -99,6 +99,7 @@ async fn get_file_cached<P: AsRef<Path>>(
     repo_root: P,
     metadata: &primitives::MetaData,
     access_token: Option<&str>,
+    randomizer_bytes: Option<usize>,
 ) -> Result<(PathBuf, FilePullMode), LFSError> {
     let cache_dir = get_cache_dir(&repo_root, metadata).await?;
     debug!("cache dir {:?}", &cache_dir);
@@ -117,10 +118,14 @@ async fn get_file_cached<P: AsRef<Path>>(
                 )
             })?;
 
-        let temp_file = primitives::download_file(metadata, &repo_url, access_token).await?;
-        fs::rename(&temp_file.path, cache_file.as_path())
+        let temp_file =
+            primitives::download_file(metadata, &repo_url, access_token, randomizer_bytes).await?;
+        fs::rename(&temp_file.path(), cache_file.as_path())
             .map_err(|e| {
-                LFSError::FatFileIOError(FatIOError::from_std_io_err(e, temp_file.path.clone()))
+                LFSError::FatFileIOError(FatIOError::from_std_io_err(
+                    e,
+                    temp_file.path().to_path_buf(),
+                ))
             })
             .await?;
 
@@ -141,6 +146,7 @@ async fn get_file_cached<P: AsRef<Path>>(
 pub async fn pull_file<P: AsRef<Path>>(
     lfs_file: P,
     access_token: Option<&str>,
+    randomizer_bytes: Option<usize>,
 ) -> Result<FilePullMode, LFSError> {
     info!("Pulling file {}", lfs_file.as_ref().to_string_lossy());
     if !primitives::is_lfs_node_file(&lfs_file).await? {
@@ -157,7 +163,8 @@ pub async fn pull_file<P: AsRef<Path>>(
     let repo_root = get_repo_root(&lfs_file).await.map_err(|e| {
         LFSError::DirectoryTraversalError(format!("Could not find git repo root: {:?}", e))
     })?;
-    let (file_name_cached, origin) = get_file_cached(&repo_root, &metadata, access_token).await?;
+    let (file_name_cached, origin) =
+        get_file_cached(&repo_root, &metadata, access_token, randomizer_bytes).await?;
     info!(
         "Found file (Origin: {:?}), linking to {}",
         origin,
@@ -192,23 +199,26 @@ fn glob_recurse(wildcard_pattern: &str) -> Result<Vec<PathBuf>, LFSError> {
 ///
 /// * `access_token` - the token for Bearer-Auth via HTTPS
 ///
+/// * `randomizer bytes` - bytes used to create a randomized named temp file
+///
 /// # Examples
 ///
 /// Load all .jpg files from all subdirectories
 /// ```no_run
-/// let result = lfspull::glob_recurse_pull_directory("dir/to/pull/**/*.jpg", Some("secret-token"));
+/// let result = lfspull::glob_recurse_pull_directory("dir/to/pull/**/*.jpg", Some("secret-token"), Some(5));
 /// ```
 ///
 pub async fn glob_recurse_pull_directory(
     wildcard_pattern: &str,
     access_token: Option<&str>,
+    randomizer_bytes: Option<usize>,
 ) -> Result<Vec<(String, FilePullMode)>, LFSError> {
     let mut result_vec = Vec::new();
     let files = glob_recurse(wildcard_pattern)?;
     for path in files {
         result_vec.push((
             path.to_string_lossy().to_string(),
-            pull_file(&path, access_token).await?,
+            pull_file(&path, access_token, randomizer_bytes).await?,
         ));
     }
 
