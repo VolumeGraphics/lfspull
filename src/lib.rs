@@ -78,6 +78,9 @@ pub mod prelude {
         /// Strange / malformed http response
         #[error("Invalid HTTP response: {0}")]
         InvalidResponse(String),
+        /// something failed while creating tempfile
+        #[error("TempFile error: {0}")]
+        TempFile(String),
     }
 }
 pub use prelude::FilePullMode;

@@ -1,11 +1,11 @@
 use crate::prelude::*;
 mod primitives;
 
+use futures_util::TryFutureExt;
 use glob::glob;
 use primitives::get_repo_root;
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
 use tracing::{debug, info};
 use url::Url;
 use vg_errortools::{fat_io_wrap_tokio, FatIOError};
@@ -34,7 +34,6 @@ async fn get_real_repo_root<P: AsRef<Path>>(repo_path: P) -> Result<PathBuf, LFS
         let worktree_file_contents = fat_io_wrap_tokio(git_path, tokio::fs::read_to_string).await?;
         let worktree_path = worktree_file_contents
             .split(':')
-            .into_iter()
             .find(|c| c.contains(".git"))
             .expect("Could not resolve original repo .git/config file from worktree .git file")
             .trim();
@@ -100,12 +99,17 @@ async fn get_file_cached<P: AsRef<Path>>(
     repo_root: P,
     metadata: &primitives::MetaData,
     access_token: Option<&str>,
+    randomizer_bytes: Option<usize>,
 ) -> Result<(PathBuf, FilePullMode), LFSError> {
     let cache_dir = get_cache_dir(&repo_root, metadata).await?;
+    debug!("cache dir {:?}", &cache_dir);
     let cache_file = cache_dir.join(&metadata.oid);
+    debug!("cache file {:?}", &cache_file);
     let repo_url = remote_url_ssh_to_https(get_remote_url(&repo_root).await?)?;
 
-    if !cache_file.is_file() {
+    if cache_file.is_file() {
+        Ok((cache_file, FilePullMode::UsedLocalCache))
+    } else {
         fat_io_wrap_tokio(cache_dir, fs::create_dir_all)
             .await
             .map_err(|_| {
@@ -113,15 +117,19 @@ async fn get_file_cached<P: AsRef<Path>>(
                     "Could not create lfs cache directory".to_string(),
                 )
             })?;
-        let buf = primitives::download_file(metadata, &repo_url, access_token).await?;
-        fat_io_wrap_tokio(&cache_file, fs::File::create)
-            .await?
-            .write_all(&buf)
-            .await
-            .map_err(|e| FatIOError::from_std_io_err(e, cache_file.clone()))?;
+
+        let temp_file =
+            primitives::download_file(metadata, &repo_url, access_token, randomizer_bytes).await?;
+        fs::rename(&temp_file.path(), cache_file.as_path())
+            .map_err(|e| {
+                LFSError::FatFileIOError(FatIOError::from_std_io_err(
+                    e,
+                    temp_file.path().to_path_buf(),
+                ))
+            })
+            .await?;
+
         Ok((cache_file, FilePullMode::DownloadedFromRemote))
-    } else {
-        Ok((cache_file, FilePullMode::UsedLocalCache))
     }
 }
 
@@ -138,6 +146,7 @@ async fn get_file_cached<P: AsRef<Path>>(
 pub async fn pull_file<P: AsRef<Path>>(
     lfs_file: P,
     access_token: Option<&str>,
+    randomizer_bytes: Option<usize>,
 ) -> Result<FilePullMode, LFSError> {
     info!("Pulling file {}", lfs_file.as_ref().to_string_lossy());
     if !primitives::is_lfs_node_file(&lfs_file).await? {
@@ -154,7 +163,8 @@ pub async fn pull_file<P: AsRef<Path>>(
     let repo_root = get_repo_root(&lfs_file).await.map_err(|e| {
         LFSError::DirectoryTraversalError(format!("Could not find git repo root: {:?}", e))
     })?;
-    let (file_name_cached, origin) = get_file_cached(&repo_root, &metadata, access_token).await?;
+    let (file_name_cached, origin) =
+        get_file_cached(&repo_root, &metadata, access_token, randomizer_bytes).await?;
     info!(
         "Found file (Origin: {:?}), linking to {}",
         origin,
@@ -189,23 +199,26 @@ fn glob_recurse(wildcard_pattern: &str) -> Result<Vec<PathBuf>, LFSError> {
 ///
 /// * `access_token` - the token for Bearer-Auth via HTTPS
 ///
+/// * `randomizer bytes` - bytes used to create a randomized named temp file
+///
 /// # Examples
 ///
 /// Load all .jpg files from all subdirectories
 /// ```no_run
-/// let result = lfspull::glob_recurse_pull_directory("dir/to/pull/**/*.jpg", Some("secret-token"));
+/// let result = lfspull::glob_recurse_pull_directory("dir/to/pull/**/*.jpg", Some("secret-token"), Some(5));
 /// ```
 ///
 pub async fn glob_recurse_pull_directory(
     wildcard_pattern: &str,
     access_token: Option<&str>,
+    randomizer_bytes: Option<usize>,
 ) -> Result<Vec<(String, FilePullMode)>, LFSError> {
     let mut result_vec = Vec::new();
     let files = glob_recurse(wildcard_pattern)?;
     for path in files {
         result_vec.push((
             path.to_string_lossy().to_string(),
-            pull_file(&path, access_token).await?,
+            pull_file(&path, access_token, randomizer_bytes).await?,
         ));
     }
 

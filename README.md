@@ -22,9 +22,16 @@ The CLI is pretty straight forward.
 - '-r / --recurse-pattern [PATTERN]' downloads everything that matches the pattern
   - e.g. 'lfspull -r "*.tgz"' downloads all .tgz files in this folder
   - e.g. 'lfspull -r "**/*.tgz"' downloads all .tgz files this folder and all subfolders
+- '-b / --random-bytes [RANDOM_BYTES]' for temp file name. See https://docs.rs/tempfile/latest/tempfile/struct.Builder.html#method.rand_bytes
 - '-a / --access-token [TOKEN]' sets the token - can also be set via $ACCESS_TOKEN from env
 - '-v' for verbose mode
 
 ## Library API guide
 
 Please see our docs.rs for example code and the gherkin tests for how to check the origin of the file.
+
+## Changelog
+
+### 0.3.0
+
+- use stream_bytes to download object directly into a temporary files and avoid 'memory allocation of x bytes failed'

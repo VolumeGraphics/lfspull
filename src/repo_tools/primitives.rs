@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use hex::FromHexError;
+use futures_util::stream::StreamExt;
 use http::StatusCode;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -7,11 +7,13 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::convert::TryInto;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use tempfile::NamedTempFile;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
-use tracing::info;
+use tracing::{debug, info};
 use url::Url;
 use vg_errortools::{fat_io_wrap_tokio, FatIOError};
 
@@ -117,11 +119,24 @@ fn url_with_auth(url: &str, access_token: Option<&str>) -> Result<Url, LFSError>
     Ok(url)
 }
 
+// //no need for tempfile crate
+// pub(crate) struct TempFile {
+//     pub(crate) path: PathBuf,
+//     pub(crate) file: fs::File,
+// }
+//
+// impl Drop for TempFile {
+//     fn drop(&mut self) {
+//         let _ = std::fs::remove_file(&self.path);
+//     }
+// }
+
 pub async fn download_file(
     meta_data: &MetaData,
     repo_remote_url: &str,
     access_token: Option<&str>,
-) -> Result<bytes::Bytes, LFSError> {
+    randomizer_bytes: Option<usize>,
+) -> Result<NamedTempFile, LFSError> {
     const MEDIA_TYPE: &str = "application/vnd.git-lfs+json";
     let client = Client::builder().build()?;
     assert_eq!(meta_data.hash, Some(Hash::SHA256));
@@ -183,19 +198,51 @@ pub async fn download_file(
         );
         return Err(LFSError::InvalidResponse(message));
     }
-    let bytes = response.bytes().await?;
-    if !check_hash(&bytes, &object.oid)? {
-        return Err(LFSError::ChecksumMismatch);
-    }
-    Ok(bytes)
-}
 
-fn check_hash(bytes: &bytes::Bytes, checksum: &str) -> Result<bool, FromHexError> {
+    debug!("creating temp file in current dir");
+
+    const TEMP_SUFFIX: &str = ".lfstmp";
+    const TEMP_FOLDER: &str = "./";
+    let tmp_path = PathBuf::from(TEMP_FOLDER).join(format!("{}{TEMP_SUFFIX}", &meta_data.oid));
+    if randomizer_bytes.is_none() && tmp_path.exists() {
+        debug!("temp file exists. Deleting");
+        fat_io_wrap_tokio(&tmp_path, fs::remove_file).await?;
+    }
+    let temp_file = tempfile::Builder::new()
+        .prefix(&meta_data.oid)
+        .suffix(TEMP_SUFFIX)
+        .rand_bytes(randomizer_bytes.unwrap_or_default())
+        .tempfile_in(TEMP_FOLDER)
+        .map_err(|e| LFSError::TempFile(e.to_string()))?;
+
     let mut hasher = Sha256::new();
-    hasher.update(bytes);
+    let mut stream = response.bytes_stream();
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result?;
+        temp_file.as_file().write_all(&chunk).map_err(|e| {
+            LFSError::FatFileIOError(FatIOError::from_std_io_err(
+                e,
+                temp_file.path().to_path_buf(),
+            ))
+        })?;
+        hasher.update(chunk);
+    }
+    temp_file.as_file().flush().map_err(|e| {
+        LFSError::FatFileIOError(FatIOError::from_std_io_err(
+            e,
+            temp_file.path().to_path_buf(),
+        ))
+    })?;
+
+    debug!("checking hash");
+
     let result = hasher.finalize();
-    let hex_data = hex::decode(checksum.as_bytes())?;
-    Ok(result[..] == hex_data)
+    let hex_data = hex::decode(object.oid.as_bytes())?;
+    if result[..] == hex_data {
+        Ok(temp_file)
+    } else {
+        Err(LFSError::ChecksumMismatch)
+    }
 }
 
 pub async fn is_lfs_node_file<P: AsRef<Path>>(path: P) -> Result<bool, LFSError> {
@@ -203,8 +250,7 @@ pub async fn is_lfs_node_file<P: AsRef<Path>>(path: P) -> Result<bool, LFSError>
         return Ok(false);
     }
     let mut reader = fat_io_wrap_tokio(&path, fs::File::open).await?;
-    let mut buf: Vec<u8> = Vec::new();
-    buf.resize(FILE_HEADER.len(), 0);
+    let mut buf: Vec<u8> = vec![0; FILE_HEADER.len()];
     let read_result = reader.read_exact(buf.as_mut_slice()).await;
     if let Err(e) = read_result {
         match e.kind() {
@@ -272,13 +318,19 @@ size 665694"#;
         );
         assert_eq!(parsed.hash, Some(Hash::SHA256));
     }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn try_pull_from_demo_repo() {
         let parsed = parse_lfs_string(LFS_TEST_DATA).expect("Could not parse demo-string!");
-        let bytes = download_file(&parsed, URL, None)
+        let temp_file = download_file(&parsed, URL, None, None)
             .await
-            .expect("could not read bytes");
-        assert_eq!(bytes.len(), parsed.size);
+            .expect("could not download file");
+        let temp_size = temp_file
+            .as_file()
+            .metadata()
+            .expect("could not get temp file size")
+            .len();
+        assert_eq!(temp_size as usize, parsed.size);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
