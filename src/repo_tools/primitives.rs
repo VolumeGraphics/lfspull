@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use tempfile::NamedTempFile;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 use url::Url;
 use vg_errortools::{fat_io_wrap_tokio, FatIOError};
 
@@ -119,18 +119,6 @@ fn url_with_auth(url: &str, access_token: Option<&str>) -> Result<Url, LFSError>
     Ok(url)
 }
 
-// //no need for tempfile crate
-// pub(crate) struct TempFile {
-//     pub(crate) path: PathBuf,
-//     pub(crate) file: fs::File,
-// }
-//
-// impl Drop for TempFile {
-//     fn drop(&mut self) {
-//         let _ = std::fs::remove_file(&self.path);
-//     }
-// }
-
 pub async fn download_file(
     meta_data: &MetaData,
     repo_remote_url: &str,
@@ -215,11 +203,14 @@ pub async fn download_file(
         .tempfile_in(TEMP_FOLDER)
         .map_err(|e| LFSError::TempFile(e.to_string()))?;
 
+    debug!("created tempfile: {:?}", &temp_file);
+
     let mut hasher = Sha256::new();
     let mut stream = response.bytes_stream();
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result?;
         temp_file.as_file().write_all(&chunk).map_err(|e| {
+            error!("Could not write tempfile");
             LFSError::FatFileIOError(FatIOError::from_std_io_err(
                 e,
                 temp_file.path().to_path_buf(),
@@ -228,6 +219,7 @@ pub async fn download_file(
         hasher.update(chunk);
     }
     temp_file.as_file().flush().map_err(|e| {
+        error!("Could not flush tempfile");
         LFSError::FatFileIOError(FatIOError::from_std_io_err(
             e,
             temp_file.path().to_path_buf(),
@@ -302,19 +294,19 @@ impl Object {
 
 #[cfg(test)]
 mod tests {
-    const URL: &str = "https://dev.azure.com/rohdealx/devops/_git/git-lfs-test";
+    const URL: &str = "https://dev.azure.com/buildvgmpsmi/buildvg/_git/git-lfs-test";
     use super::*;
     const LFS_TEST_DATA: &str = r#"version https://git-lfs.github.com/spec/v1
-oid sha256:4329aab31bc9c72a897f57e038fe60655d31df6e5ddf2cf897669a845d64edbc
-size 665694"#;
+oid sha256:0fae26606afd128d4d2f730462c8451b90931d25813e06e55239a2ca00e74c74
+size 226848"#;
     #[test]
     fn test_parsing_of_string() {
         let parsed = parse_lfs_string(LFS_TEST_DATA).expect("Could not parse demo-string!");
-        assert_eq!(parsed.size, 665694);
+        assert_eq!(parsed.size, 226848);
         assert_eq!(parsed.version, "https://git-lfs.github.com/spec/v1");
         assert_eq!(
             parsed.oid,
-            "4329aab31bc9c72a897f57e038fe60655d31df6e5ddf2cf897669a845d64edbc"
+            "0fae26606afd128d4d2f730462c8451b90931d25813e06e55239a2ca00e74c74"
         );
         assert_eq!(parsed.hash, Some(Hash::SHA256));
     }

@@ -17,7 +17,7 @@ const TEST_GIT_CONFIG: &str = r#"[core]
         bare = false
         logallrefupdates = true
 [remote "origin"]
-        url = https://dev.azure.com/rohdealx/devops/_git/git-lfs-test
+        url = https://dev.azure.com/buildvgmpsmi/buildvg/_git/git-lfs-test
         fetch = +refs/heads/*:refs/remotes/origin/*
 [branch "main"]
         remote = origin
@@ -27,8 +27,8 @@ const TEST_GIT_CONFIG: &str = r#"[core]
 "#;
 
 const TEST_LFS_FILE: &str = r#"version https://git-lfs.github.com/spec/v1
-oid sha256:4329aab31bc9c72a897f57e038fe60655d31df6e5ddf2cf897669a845d64edbc
-size 665694
+oid sha256:0fae26606afd128d4d2f730462c8451b90931d25813e06e55239a2ca00e74c74
+size 226848
 "#;
 
 const TEST_LFS_FILE_NAME: &str = "beer_tornado.mp4";
