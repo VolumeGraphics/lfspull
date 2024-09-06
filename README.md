@@ -32,6 +32,10 @@ Please see our docs.rs for example code and the gherkin tests for how to check t
 
 ## Changelog
 
+### 0.3.1
+
+- fix bug when trying to rename temp file to cache file, but cache file is already created and locked by other parallel job
+
 ### 0.3.0
 
 - use stream_bytes to download object directly into a temporary files and avoid 'memory allocation of x bytes failed'

@@ -6,7 +6,7 @@ use glob::glob;
 use primitives::get_repo_root;
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 use url::Url;
 use vg_errortools::{fat_io_wrap_tokio, FatIOError};
 
@@ -120,14 +120,27 @@ async fn get_file_cached<P: AsRef<Path>>(
 
         let temp_file =
             primitives::download_file(metadata, &repo_url, access_token, randomizer_bytes).await?;
-        fs::rename(&temp_file.path(), cache_file.as_path())
-            .map_err(|e| {
-                LFSError::FatFileIOError(FatIOError::from_std_io_err(
-                    e,
-                    temp_file.path().to_path_buf(),
-                ))
-            })
-            .await?;
+        if cache_file.exists() {
+            info!(
+                "cache file {:?} is already written from other process",
+                &cache_file
+            );
+        } else {
+            fs::rename(&temp_file.path(), cache_file.as_path())
+                .map_err(|e| {
+                    error!(
+                        "Could not rename {:?} to {:?}: {:?}",
+                        temp_file.path(),
+                        cache_file.as_path(),
+                        &e
+                    );
+                    LFSError::FatFileIOError(FatIOError::from_std_io_err(
+                        e,
+                        temp_file.path().to_path_buf(),
+                    ))
+                })
+                .await?;
+        }
 
         Ok((cache_file, FilePullMode::DownloadedFromRemote))
     }
