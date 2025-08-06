@@ -31,7 +31,7 @@ async fn get_real_repo_root<P: AsRef<Path>>(repo_path: P) -> Result<PathBuf, LFS
     let git_path = repo_path.as_ref().join(".git");
     let real_git_path = if repo_path.as_ref().join(".git").is_file() {
         //worktree case
-        let worktree_file_contents = fat_io_wrap_tokio(git_path, tokio::fs::read_to_string).await?;
+        let worktree_file_contents = fat_io_wrap_tokio(git_path, fs::read_to_string).await?;
         let worktree_path = worktree_file_contents
             .split(':')
             .find(|c| c.contains(".git"))
@@ -101,6 +101,7 @@ async fn get_file_cached<P: AsRef<Path>>(
     access_token: Option<&str>,
     randomizer_bytes: Option<usize>,
 ) -> Result<(PathBuf, FilePullMode), LFSError> {
+    debug!("version: {}", &metadata.version);
     let cache_dir = get_cache_dir(&repo_root, metadata).await?;
     debug!("cache dir {:?}", &cache_dir);
     let cache_file = cache_dir.join(&metadata.oid);
