@@ -13,6 +13,7 @@ use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
+use reqwest_tracing::TracingMiddleware;
 use tempfile::NamedTempFile;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
@@ -150,6 +151,7 @@ pub async fn download_file(
 
     let client = Client::builder().build()?;
     let client = ClientBuilder::new(client)
+        .with(TracingMiddleware::default())
         // Retry failed requests.
         .with(RetryTransientMiddleware::new_with_policy(retry_policy))
         .build();
