@@ -35,7 +35,7 @@ Please see our docs.rs for example code and the gherkin tests for how to check t
 ### 0.4.0
 
 - upgrade a few dependencies
-- add retry fetching from git
+- add retry attempt when failing fetching from git
 
 ### 0.3.1
 

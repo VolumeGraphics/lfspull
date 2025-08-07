@@ -4,6 +4,7 @@ use http::StatusCode;
 use reqwest::Client;
 use reqwest_middleware::ClientBuilder;
 use reqwest_retry::{policies::ExponentialBackoff, Jitter, RetryTransientMiddleware};
+use reqwest_tracing::TracingMiddleware;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -13,7 +14,6 @@ use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
-use reqwest_tracing::TracingMiddleware;
 use tempfile::NamedTempFile;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
@@ -127,6 +127,7 @@ pub async fn download_file(
     meta_data: &MetaData,
     repo_remote_url: &str,
     access_token: Option<&str>,
+    max_retry: u32,
     randomizer_bytes: Option<usize>,
 ) -> Result<NamedTempFile, LFSError> {
     const MEDIA_TYPE: &str = "application/vnd.git-lfs+json";
@@ -145,7 +146,7 @@ pub async fn download_file(
         .retry_bounds(Duration::from_secs(1), Duration::from_secs(10))
         .base(1)
         .jitter(Jitter::None)
-        .build_with_max_retries(3);
+        .build_with_max_retries(max_retry);
 
     debug!("Retry policy: {:?}", retry_policy);
 
@@ -335,7 +336,7 @@ size 226848"#;
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn try_pull_from_demo_repo() {
         let parsed = parse_lfs_string(LFS_TEST_DATA).expect("Could not parse demo-string!");
-        let temp_file = download_file(&parsed, URL, None, None)
+        let temp_file = download_file(&parsed, URL, None, 3, None)
             .await
             .expect("could not download file");
         let temp_size = temp_file
