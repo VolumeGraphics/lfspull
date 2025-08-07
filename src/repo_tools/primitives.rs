@@ -2,6 +2,8 @@ use crate::prelude::*;
 use futures_util::stream::StreamExt;
 use http::StatusCode;
 use reqwest::Client;
+use reqwest_middleware::ClientBuilder;
+use reqwest_retry::{policies::ExponentialBackoff, Jitter, RetryTransientMiddleware};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -10,6 +12,7 @@ use std::convert::TryInto;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Duration;
 use tempfile::NamedTempFile;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
@@ -126,7 +129,7 @@ pub async fn download_file(
     randomizer_bytes: Option<usize>,
 ) -> Result<NamedTempFile, LFSError> {
     const MEDIA_TYPE: &str = "application/vnd.git-lfs+json";
-    let client = Client::builder().build()?;
+
     assert_eq!(meta_data.hash, Some(Hash::SHA256));
     // we are implementing git-lfs batch API here: https://github.com/git-lfs/git-lfs/blob/main/docs/api/batch.md
     let request = json!({
@@ -137,8 +140,23 @@ pub async fn download_file(
         "hash_algo": "sha256"
     });
 
+    let retry_policy = ExponentialBackoff::builder()
+        .retry_bounds(Duration::from_secs(1), Duration::from_secs(10))
+        .base(1)
+        .jitter(Jitter::None)
+        .build_with_max_retries(3);
+
+    debug!("Retry policy: {:?}", retry_policy);
+
+    let client = Client::builder().build()?;
+    let client = ClientBuilder::new(client)
+        // Retry failed requests.
+        .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+        .build();
+
     let request_url = repo_remote_url.to_owned() + "/info/lfs/objects/batch";
     let request_url = url_with_auth(&request_url, access_token)?;
+
     let response = client
         .post(request_url.clone())
         .header("Accept", MEDIA_TYPE)
@@ -146,6 +164,7 @@ pub async fn download_file(
         .json(&request)
         .send()
         .await?;
+
     if !response.status().is_success() {
         let status = response.status();
         println!(
