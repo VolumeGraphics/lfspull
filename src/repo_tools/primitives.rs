@@ -2,9 +2,6 @@ use crate::prelude::*;
 use futures_util::stream::StreamExt;
 use http::StatusCode;
 use reqwest::Client;
-use reqwest_middleware::ClientBuilder;
-use reqwest_retry::{policies::ExponentialBackoff, Jitter, RetryTransientMiddleware};
-use reqwest_tracing::TracingMiddleware;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -17,6 +14,7 @@ use std::time::Duration;
 use tempfile::NamedTempFile;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
+use tokio::time::sleep;
 use tracing::{debug, error, info};
 use url::Url;
 use vg_errortools::{fat_io_wrap_tokio, FatIOError};
@@ -123,15 +121,14 @@ fn url_with_auth(url: &str, access_token: Option<&str>) -> Result<Url, LFSError>
     Ok(url)
 }
 
-pub async fn download_file(
+pub async fn handle_download(
     meta_data: &MetaData,
     repo_remote_url: &str,
     access_token: Option<&str>,
-    max_retry: u32,
     randomizer_bytes: Option<usize>,
 ) -> Result<NamedTempFile, LFSError> {
     const MEDIA_TYPE: &str = "application/vnd.git-lfs+json";
-
+    let client = Client::builder().build()?;
     assert_eq!(meta_data.hash, Some(Hash::SHA256));
     // we are implementing git-lfs batch API here: https://github.com/git-lfs/git-lfs/blob/main/docs/api/batch.md
     let request = json!({
@@ -142,24 +139,8 @@ pub async fn download_file(
         "hash_algo": "sha256"
     });
 
-    let retry_policy = ExponentialBackoff::builder()
-        .retry_bounds(Duration::from_secs(1), Duration::from_secs(10))
-        .base(1)
-        .jitter(Jitter::None)
-        .build_with_max_retries(max_retry);
-
-    debug!("Retry policy: {:?}", retry_policy);
-
-    let client = Client::builder().build()?;
-    let client = ClientBuilder::new(client)
-        .with(TracingMiddleware::default())
-        // Retry failed requests.
-        .with(RetryTransientMiddleware::new_with_policy(retry_policy))
-        .build();
-
     let request_url = repo_remote_url.to_owned() + "/info/lfs/objects/batch";
     let request_url = url_with_auth(&request_url, access_token)?;
-
     let response = client
         .post(request_url.clone())
         .header("Accept", MEDIA_TYPE)
@@ -167,10 +148,9 @@ pub async fn download_file(
         .json(&request)
         .send()
         .await?;
-
     if !response.status().is_success() {
         let status = response.status();
-        println!(
+        error!(
             "Failed to request git lfs actions with status code {} and body {}",
             status,
             response.text().await?,
@@ -257,6 +237,32 @@ pub async fn download_file(
     } else {
         Err(LFSError::ChecksumMismatch)
     }
+}
+
+pub async fn download_file(
+    meta_data: &MetaData,
+    repo_remote_url: &str,
+    access_token: Option<&str>,
+    max_retry: u32,
+    randomizer_bytes: Option<usize>,
+) -> Result<NamedTempFile, LFSError> {
+    for attempt in 1..=max_retry {
+        debug!("Download attempt {attempt}");
+        match handle_download(meta_data, repo_remote_url, access_token, randomizer_bytes).await {
+            Ok(tempfile) => {
+                return Ok(tempfile);
+            }
+            Err(e) => {
+                if matches!(e, LFSError::AccessDenied) {
+                    return Err(e);
+                }
+                error!("Download error: {e}. Attempting another download: {attempt}");
+                sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+
+    Err(LFSError::ReachedMaxDownloadAttempt)
 }
 
 pub async fn is_lfs_node_file<P: AsRef<Path>>(path: P) -> Result<bool, LFSError> {

@@ -53,9 +53,6 @@ pub mod prelude {
         /// Forward from the `reqwest` package, something failed while executing the fetch
         #[error("Request-error: {0}")]
         RequestError(#[from] reqwest::Error),
-        /// Forward from the `reqwest-middleware` package, something failed while executing the fetch
-        #[error("Request-middleware-error: {0}")]
-        RequestMiddlewareError(#[from] reqwest_middleware::Error),
         /// You tried to pull a non-existing file from the remote
         #[error("Remote file not found: {0}")]
         RemoteFileNotFound(&'static str),
@@ -84,6 +81,9 @@ pub mod prelude {
         /// something failed while creating tempfile
         #[error("TempFile error: {0}")]
         TempFile(String),
+        /// all download attempts have failed
+        #[error("Maximum download attempts reached")]
+        ReachedMaxDownloadAttempt,
     }
 }
 pub use prelude::FilePullMode;
