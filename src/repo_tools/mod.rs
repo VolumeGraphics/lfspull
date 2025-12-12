@@ -4,6 +4,7 @@ mod primitives;
 use futures_util::TryFutureExt;
 use glob::glob;
 use primitives::get_repo_root;
+use std::env;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tracing::{debug, error, info};
@@ -86,13 +87,17 @@ async fn get_cache_dir<P: AsRef<Path>>(
     let oid_1 = &metadata.oid[0..2];
     let oid_2 = &metadata.oid[2..4];
 
-    Ok(get_real_repo_root(repo_root)
-        .await?
-        .join(".git")
-        .join("lfs")
-        .join("objects")
-        .join(oid_1)
-        .join(oid_2))
+    let lfs_object_dir = if let Ok(value) = env::var("LFS_STORAGE_DIR") {
+        debug!("get from env var {}", &value);
+        PathBuf::from(value)
+    } else {
+        get_real_repo_root(repo_root)
+            .await?
+            .join(".git")
+            .join("lfs")
+    };
+
+    Ok(lfs_object_dir.join("objects").join(oid_1).join(oid_2))
 }
 
 async fn get_file_cached<P: AsRef<Path>>(
