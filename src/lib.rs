@@ -81,6 +81,9 @@ pub mod prelude {
         /// something failed while creating tempfile
         #[error("TempFile error: {0}")]
         TempFile(String),
+        /// all download attempts have failed
+        #[error("Maximum download attempts reached")]
+        ReachedMaxDownloadAttempt,
     }
 }
 pub use prelude::FilePullMode;

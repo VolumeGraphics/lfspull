@@ -10,9 +10,11 @@ use std::convert::TryInto;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Duration;
 use tempfile::NamedTempFile;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
+use tokio::time::sleep;
 use tracing::{debug, error, info};
 use url::Url;
 use vg_errortools::{fat_io_wrap_tokio, FatIOError};
@@ -119,7 +121,7 @@ fn url_with_auth(url: &str, access_token: Option<&str>) -> Result<Url, LFSError>
     Ok(url)
 }
 
-pub async fn download_file(
+pub async fn handle_download(
     meta_data: &MetaData,
     repo_remote_url: &str,
     access_token: Option<&str>,
@@ -148,7 +150,7 @@ pub async fn download_file(
         .await?;
     if !response.status().is_success() {
         let status = response.status();
-        println!(
+        error!(
             "Failed to request git lfs actions with status code {} and body {}",
             status,
             response.text().await?,
@@ -237,6 +239,32 @@ pub async fn download_file(
     }
 }
 
+pub async fn download_file(
+    meta_data: &MetaData,
+    repo_remote_url: &str,
+    access_token: Option<&str>,
+    max_retry: u32,
+    randomizer_bytes: Option<usize>,
+) -> Result<NamedTempFile, LFSError> {
+    for attempt in 1..=max_retry {
+        debug!("Download attempt {attempt}");
+        match handle_download(meta_data, repo_remote_url, access_token, randomizer_bytes).await {
+            Ok(tempfile) => {
+                return Ok(tempfile);
+            }
+            Err(e) => {
+                if matches!(e, LFSError::AccessDenied) {
+                    return Err(e);
+                }
+                error!("Download error: {e}. Attempting another download: {attempt}");
+                sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+
+    Err(LFSError::ReachedMaxDownloadAttempt)
+}
+
 pub async fn is_lfs_node_file<P: AsRef<Path>>(path: P) -> Result<bool, LFSError> {
     if path.as_ref().is_dir() {
         return Ok(false);
@@ -314,7 +342,7 @@ size 226848"#;
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn try_pull_from_demo_repo() {
         let parsed = parse_lfs_string(LFS_TEST_DATA).expect("Could not parse demo-string!");
-        let temp_file = download_file(&parsed, URL, None, None)
+        let temp_file = download_file(&parsed, URL, None, 3, None)
             .await
             .expect("could not download file");
         let temp_size = temp_file

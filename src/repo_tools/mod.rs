@@ -32,7 +32,7 @@ async fn get_real_repo_root<P: AsRef<Path>>(repo_path: P) -> Result<PathBuf, LFS
     let git_path = repo_path.as_ref().join(".git");
     let real_git_path = if repo_path.as_ref().join(".git").is_file() {
         //worktree case
-        let worktree_file_contents = fat_io_wrap_tokio(git_path, tokio::fs::read_to_string).await?;
+        let worktree_file_contents = fat_io_wrap_tokio(git_path, fs::read_to_string).await?;
         let worktree_path = worktree_file_contents
             .split(':')
             .find(|c| c.contains(".git"))
@@ -104,8 +104,10 @@ async fn get_file_cached<P: AsRef<Path>>(
     repo_root: P,
     metadata: &primitives::MetaData,
     access_token: Option<&str>,
+    max_retry: u32,
     randomizer_bytes: Option<usize>,
 ) -> Result<(PathBuf, FilePullMode), LFSError> {
+    debug!("version: {}", &metadata.version);
     let cache_dir = get_cache_dir(&repo_root, metadata).await?;
     debug!("cache dir {:?}", &cache_dir);
     let cache_file = cache_dir.join(&metadata.oid);
@@ -123,8 +125,14 @@ async fn get_file_cached<P: AsRef<Path>>(
                 )
             })?;
 
-        let temp_file =
-            primitives::download_file(metadata, &repo_url, access_token, randomizer_bytes).await?;
+        let temp_file = primitives::download_file(
+            metadata,
+            &repo_url,
+            access_token,
+            max_retry,
+            randomizer_bytes,
+        )
+        .await?;
         if cache_file.exists() {
             info!(
                 "cache file {:?} is already written from other process",
@@ -164,6 +172,7 @@ async fn get_file_cached<P: AsRef<Path>>(
 pub async fn pull_file<P: AsRef<Path>>(
     lfs_file: P,
     access_token: Option<&str>,
+    max_retry: u32,
     randomizer_bytes: Option<usize>,
 ) -> Result<FilePullMode, LFSError> {
     info!("Pulling file {}", lfs_file.as_ref().to_string_lossy());
@@ -181,8 +190,14 @@ pub async fn pull_file<P: AsRef<Path>>(
     let repo_root = get_repo_root(&lfs_file).await.map_err(|e| {
         LFSError::DirectoryTraversalError(format!("Could not find git repo root: {:?}", e))
     })?;
-    let (file_name_cached, origin) =
-        get_file_cached(&repo_root, &metadata, access_token, randomizer_bytes).await?;
+    let (file_name_cached, origin) = get_file_cached(
+        &repo_root,
+        &metadata,
+        access_token,
+        max_retry,
+        randomizer_bytes,
+    )
+    .await?;
     info!(
         "Found file (Origin: {:?}), linking to {}",
         origin,
@@ -217,18 +232,21 @@ fn glob_recurse(wildcard_pattern: &str) -> Result<Vec<PathBuf>, LFSError> {
 ///
 /// * `access_token` - the token for Bearer-Auth via HTTPS
 ///
+/// * `max retry` - max number of retry attempt when http request fails
+///
 /// * `randomizer bytes` - bytes used to create a randomized named temp file
 ///
 /// # Examples
 ///
 /// Load all .jpg files from all subdirectories
 /// ```no_run
-/// let result = lfspull::glob_recurse_pull_directory("dir/to/pull/**/*.jpg", Some("secret-token"), Some(5));
+/// let result = lfspull::glob_recurse_pull_directory("dir/to/pull/**/*.jpg", Some("secret-token"), 3, Some(5));
 /// ```
 ///
 pub async fn glob_recurse_pull_directory(
     wildcard_pattern: &str,
     access_token: Option<&str>,
+    max_retry: u32,
     randomizer_bytes: Option<usize>,
 ) -> Result<Vec<(String, FilePullMode)>, LFSError> {
     let mut result_vec = Vec::new();
@@ -236,7 +254,7 @@ pub async fn glob_recurse_pull_directory(
     for path in files {
         result_vec.push((
             path.to_string_lossy().to_string(),
-            pull_file(&path, access_token, randomizer_bytes).await?,
+            pull_file(&path, access_token, max_retry, randomizer_bytes).await?,
         ));
     }
 

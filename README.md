@@ -32,6 +32,11 @@ Please see our docs.rs for example code and the gherkin tests for how to check t
 
 ## Changelog
 
+### 0.4.0
+
+- upgrade a few dependencies
+- add retry attempt when failing fetching from git
+
 ### 0.3.1
 
 - fix bug when trying to rename temp file to cache file, but cache file is already created and locked by other parallel job
