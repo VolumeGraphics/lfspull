@@ -32,6 +32,11 @@ Please see our docs.rs for example code and the gherkin tests for how to check t
 
 ## Changelog
 
+### 0.4.1
+
+- add rust-toolchain 1.88
+- read git config for lfs storage path
+
 ### 0.4.0
 
 - upgrade a few dependencies

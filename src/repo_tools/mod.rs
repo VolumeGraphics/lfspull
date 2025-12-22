@@ -4,15 +4,15 @@ mod primitives;
 use futures_util::TryFutureExt;
 use glob::glob;
 use primitives::get_repo_root;
-use std::env;
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tracing::{debug, error, info};
+use tokio::fs::read_to_string;
+use tracing::{debug, error, info, warn};
 use url::Url;
 use vg_errortools::{fat_io_wrap_tokio, FatIOError};
 
 async fn get_remote_url_from_file(git_file: impl AsRef<Path>) -> Result<String, LFSError> {
-    let file_buffer = fat_io_wrap_tokio(git_file, fs::read_to_string).await?;
+    let file_buffer = fat_io_wrap_tokio(git_file, read_to_string).await?;
     let remote_url = file_buffer
         .lines()
         .find(|&line| line.contains("url"))
@@ -21,7 +21,7 @@ async fn get_remote_url_from_file(git_file: impl AsRef<Path>) -> Result<String, 
             ".git/config contains no remote url",
         ))?
         .split('=')
-        .last()
+        .next_back()
         .as_ref()
         .ok_or(LFSError::InvalidFormat(".git/config url line malformed"))?
         .trim();
@@ -32,7 +32,7 @@ async fn get_real_repo_root<P: AsRef<Path>>(repo_path: P) -> Result<PathBuf, LFS
     let git_path = repo_path.as_ref().join(".git");
     let real_git_path = if repo_path.as_ref().join(".git").is_file() {
         //worktree case
-        let worktree_file_contents = fat_io_wrap_tokio(git_path, fs::read_to_string).await?;
+        let worktree_file_contents = fat_io_wrap_tokio(git_path, read_to_string).await?;
         let worktree_path = worktree_file_contents
             .split(':')
             .find(|c| c.contains(".git"))
@@ -77,7 +77,7 @@ fn remote_url_ssh_to_https(repo_url: String) -> Result<String, LFSError> {
         .host_str()
         .ok_or(LFSError::InvalidFormat("Url had no valid host"))?;
     let path = input_url.path();
-    Ok(format!("https://{}{}", host, path))
+    Ok(format!("https://{host}{path}"))
 }
 
 async fn get_cache_dir<P: AsRef<Path>>(
@@ -87,17 +87,39 @@ async fn get_cache_dir<P: AsRef<Path>>(
     let oid_1 = &metadata.oid[0..2];
     let oid_2 = &metadata.oid[2..4];
 
-    let lfs_object_dir = if let Ok(value) = env::var("LFS_STORAGE_DIR") {
-        debug!("get from env var {}", &value);
-        PathBuf::from(value)
-    } else {
-        get_real_repo_root(repo_root)
-            .await?
-            .join(".git")
-            .join("lfs")
-    };
+    let mut git_folder = get_real_repo_root(repo_root).await?.join(".git");
+    let config = git_folder.join("config");
+    if config.exists() {
+        debug!("Read git config file in {}", config.to_string_lossy());
+        let config_content = read_to_string(&config).await.unwrap_or_else(|e| {
+            warn!("Could not read git config: {e}");
+            String::new()
+        });
+        let mut config_content = config_content.lines().peekable();
 
-    Ok(lfs_object_dir.join("objects").join(oid_1).join(oid_2))
+        while config_content.peek().is_some() {
+            let line = config_content.next().unwrap_or_default();
+            let line = line.trim();
+            if line.contains("[lfs]") {
+                while config_content.peek().is_some() {
+                    let next_line = config_content.next().unwrap_or_default();
+                    let next_line = next_line.trim();
+                    if let Some(storage_url) = next_line.strip_prefix("storage = ") {
+                        debug!("Found git lfs storage path: '{storage_url}'");
+                        git_folder = PathBuf::from(storage_url);
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    Ok(git_folder
+        .join("lfs")
+        .join("objects")
+        .join(oid_1)
+        .join(oid_2))
 }
 
 async fn get_file_cached<P: AsRef<Path>>(
@@ -188,7 +210,7 @@ pub async fn pull_file<P: AsRef<Path>>(
     let metadata = primitives::parse_lfs_file(&lfs_file).await?;
     debug!("Downloading file");
     let repo_root = get_repo_root(&lfs_file).await.map_err(|e| {
-        LFSError::DirectoryTraversalError(format!("Could not find git repo root: {:?}", e))
+        LFSError::DirectoryTraversalError(format!("Could not find git repo root: {e:?}"))
     })?;
     let (file_name_cached, origin) = get_file_cached(
         &repo_root,
@@ -214,11 +236,11 @@ fn glob_recurse(wildcard_pattern: &str) -> Result<Vec<PathBuf>, LFSError> {
     let mut return_vec = Vec::new();
 
     let glob = glob(wildcard_pattern).map_err(|e| {
-        LFSError::DirectoryTraversalError(format!("Could not parse glob pattern: {}", e))
+        LFSError::DirectoryTraversalError(format!("Could not parse glob pattern: {e}"))
     })?;
     for entry in glob {
         return_vec.push(entry.map_err(|e| {
-            LFSError::DirectoryTraversalError(format!("Error in glob result list: {}", e))
+            LFSError::DirectoryTraversalError(format!("Error in glob result list: {e}"))
         })?);
     }
     Ok(return_vec)
@@ -264,6 +286,7 @@ pub async fn glob_recurse_pull_directory(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::repo_tools::primitives::MetaData;
     use tracing::error;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

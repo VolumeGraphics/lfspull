@@ -158,7 +158,7 @@ pub async fn handle_download(
         return if status == StatusCode::FORBIDDEN || status == StatusCode::UNAUTHORIZED {
             Err(LFSError::AccessDenied)
         } else {
-            Err(LFSError::ResponseNotOkay(format!("{}", status)))
+            Err(LFSError::ResponseNotOkay(format!("{status}")))
         };
     }
     let parsed_result = response.json::<ApiResult>().await?;
