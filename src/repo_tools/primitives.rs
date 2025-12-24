@@ -14,7 +14,7 @@ use std::time::Duration;
 use tempfile::NamedTempFile;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 use tracing::{debug, error, info};
 use url::Url;
 use vg_errortools::{fat_io_wrap_tokio, FatIOError};
@@ -245,24 +245,65 @@ pub async fn download_file(
     access_token: Option<&str>,
     max_retry: u32,
     randomizer_bytes: Option<usize>,
+    connection_timeout: Option<u64>,
 ) -> Result<NamedTempFile, LFSError> {
+    let effective_timeout = get_effective_timeout(connection_timeout, meta_data.size);
     for attempt in 1..=max_retry {
         debug!("Download attempt {attempt}");
-        match handle_download(meta_data, repo_remote_url, access_token, randomizer_bytes).await {
-            Ok(tempfile) => {
-                return Ok(tempfile);
-            }
-            Err(e) => {
-                if matches!(e, LFSError::AccessDenied) {
-                    return Err(e);
+        let download = handle_download(meta_data, repo_remote_url, access_token, randomizer_bytes);
+        let result = if let Some(seconds) = effective_timeout {
+            timeout(Duration::from_secs(seconds), download).await
+        } else {
+            Ok(download.await)
+        };
+
+        match result {
+            Ok(download_result) => match download_result {
+                Ok(tempfile) => {
+                    return Ok(tempfile);
                 }
-                error!("Download error: {e}. Attempting another download: {attempt}");
-                sleep(Duration::from_secs(1)).await;
+                Err(e) => {
+                    if matches!(e, LFSError::AccessDenied) {
+                        return Err(e);
+                    }
+                    error!("Download error: {e}");
+                }
+            },
+            Err(timeout_err) => {
+                error!("Timeout reached: {timeout_err}");
             }
         }
+        sleep(Duration::from_secs(1)).await;
     }
 
     Err(LFSError::ReachedMaxDownloadAttempt)
+}
+
+/// Some(0) => no timeout
+/// Some(x) => x seconds timeout
+/// None => automatic
+fn get_effective_timeout(timeout: Option<u64>, file_size_in_kb: usize) -> Option<u64> {
+    match timeout {
+        Some(0) => {
+            debug!("No timeout");
+            None
+        }
+        Some(val) => {
+            debug!("Set timeout to {val} s");
+            Some(val)
+        }
+        None => {
+            let min_upload_speed_mb_per_sec = 1.0;
+            let min_timeout_secs = 30;
+            let file_size_mb = file_size_in_kb as f64 / (1024.0 * 1024.0);
+            let timeout_secs = (file_size_mb / min_upload_speed_mb_per_sec).ceil() as u64;
+            let timeout_secs = timeout_secs.max(min_timeout_secs);
+
+            debug!("Automatic calculated timeout: {timeout_secs} s");
+
+            Some(timeout_secs)
+        }
+    }
 }
 
 pub async fn is_lfs_node_file<P: AsRef<Path>>(path: P) -> Result<bool, LFSError> {
@@ -342,7 +383,7 @@ size 226848"#;
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn try_pull_from_demo_repo() {
         let parsed = parse_lfs_string(LFS_TEST_DATA).expect("Could not parse demo-string!");
-        let temp_file = download_file(&parsed, URL, None, 3, None)
+        let temp_file = download_file(&parsed, URL, None, 3, None, Some(0))
             .await
             .expect("could not download file");
         let temp_size = temp_file
@@ -375,5 +416,20 @@ size 226848"#;
             .await
             .expect("File was not readable");
         assert!(!result);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_get_effective_timeout() {
+        let timeout = get_effective_timeout(Some(9), 1000);
+        assert_eq!(timeout, Some(9));
+
+        let timeout = get_effective_timeout(Some(0), 1000);
+        assert_eq!(timeout, None);
+
+        let timeout = get_effective_timeout(None, 1000);
+        assert_eq!(timeout, Some(30));
+
+        let timeout = get_effective_timeout(None, 200000000);
+        assert_eq!(timeout, Some(191));
     }
 }

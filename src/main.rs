@@ -29,6 +29,12 @@ struct Args {
     /// Print debug information
     #[clap(short, long)]
     verbose: bool,
+
+    ///timeout in seconds for git lfs pull request
+    ///When None given, the timeout is calculated automatically based on lfs object size
+    ///When 0 given, there is no timeout
+    #[clap(short, long)]
+    timeout: Option<u64>,
 }
 
 #[tokio::main]
@@ -52,8 +58,14 @@ pub async fn main() -> Result<(), LFSError> {
     let access_token = args.access_token.as_deref();
     if let Some(file) = args.file_to_pull {
         info!("Single file mode: {}", file.to_string_lossy());
-        let result =
-            lfspull::pull_file(file, access_token, args.max_retry, args.random_bytes).await?;
+        let result = lfspull::pull_file(
+            file,
+            access_token,
+            args.max_retry,
+            args.random_bytes,
+            args.timeout,
+        )
+        .await?;
         info!("Result: {}", result);
     }
     if let Some(recurse_pattern) = args.recurse_pattern {
@@ -63,6 +75,7 @@ pub async fn main() -> Result<(), LFSError> {
             access_token,
             args.max_retry,
             args.random_bytes,
+            args.timeout,
         )
         .await?;
         info!("Pulling finished! Listing files and sources: ");

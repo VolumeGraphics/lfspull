@@ -84,6 +84,9 @@ pub mod prelude {
         /// all download attempts have failed
         #[error("Maximum download attempts reached")]
         ReachedMaxDownloadAttempt,
+        /// Timeout error
+        #[error("Download failed due to timeout")]
+        Timeout,
     }
 }
 pub use prelude::FilePullMode;

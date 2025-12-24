@@ -128,6 +128,7 @@ async fn get_file_cached<P: AsRef<Path>>(
     access_token: Option<&str>,
     max_retry: u32,
     randomizer_bytes: Option<usize>,
+    timeout: Option<u64>,
 ) -> Result<(PathBuf, FilePullMode), LFSError> {
     debug!("version: {}", &metadata.version);
     let cache_dir = get_cache_dir(&repo_root, metadata).await?;
@@ -153,6 +154,7 @@ async fn get_file_cached<P: AsRef<Path>>(
             access_token,
             max_retry,
             randomizer_bytes,
+            timeout,
         )
         .await?;
         if cache_file.exists() {
@@ -196,6 +198,7 @@ pub async fn pull_file<P: AsRef<Path>>(
     access_token: Option<&str>,
     max_retry: u32,
     randomizer_bytes: Option<usize>,
+    timeout: Option<u64>,
 ) -> Result<FilePullMode, LFSError> {
     info!("Pulling file {}", lfs_file.as_ref().to_string_lossy());
     if !primitives::is_lfs_node_file(&lfs_file).await? {
@@ -218,6 +221,7 @@ pub async fn pull_file<P: AsRef<Path>>(
         access_token,
         max_retry,
         randomizer_bytes,
+        timeout,
     )
     .await?;
     info!(
@@ -262,7 +266,7 @@ fn glob_recurse(wildcard_pattern: &str) -> Result<Vec<PathBuf>, LFSError> {
 ///
 /// Load all .jpg files from all subdirectories
 /// ```no_run
-/// let result = lfspull::glob_recurse_pull_directory("dir/to/pull/**/*.jpg", Some("secret-token"), 3, Some(5));
+/// let result = lfspull::glob_recurse_pull_directory("dir/to/pull/**/*.jpg", Some("secret-token"), 3, Some(5), Some(0));
 /// ```
 ///
 pub async fn glob_recurse_pull_directory(
@@ -270,13 +274,14 @@ pub async fn glob_recurse_pull_directory(
     access_token: Option<&str>,
     max_retry: u32,
     randomizer_bytes: Option<usize>,
+    timeout: Option<u64>,
 ) -> Result<Vec<(String, FilePullMode)>, LFSError> {
     let mut result_vec = Vec::new();
     let files = glob_recurse(wildcard_pattern)?;
     for path in files {
         result_vec.push((
             path.to_string_lossy().to_string(),
-            pull_file(&path, access_token, max_retry, randomizer_bytes).await?,
+            pull_file(&path, access_token, max_retry, randomizer_bytes, timeout).await?,
         ));
     }
 
@@ -286,7 +291,6 @@ pub async fn glob_recurse_pull_directory(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repo_tools::primitives::MetaData;
     use tracing::error;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

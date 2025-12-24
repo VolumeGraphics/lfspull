@@ -55,7 +55,7 @@ async fn pull_file_step(world: &mut LFSWorld) {
         .clone()
         .join(TEST_LFS_FILE_NAME);
     world.pull_result = Some(
-        lfspull::pull_file(file_path, None, 3, Some(5))
+        lfspull::pull_file(file_path, None, 3, Some(5), Some(0))
             .await
             .expect("Could not pull file"),
     );
@@ -65,7 +65,7 @@ async fn pull_file_step(world: &mut LFSWorld) {
 async fn pull_directory(world: &mut LFSWorld) {
     let fake_repo = world.current_fake_repo.as_ref().unwrap().to_string_lossy();
     let pattern = format!("{}/**/*", fake_repo);
-    let recurse_pull = lfspull::glob_recurse_pull_directory(&pattern, None, 3, Some(5))
+    let recurse_pull = lfspull::glob_recurse_pull_directory(&pattern, None, 3, Some(5), Some(0))
         .await
         .expect("Could not pull directory")
         .into_iter()

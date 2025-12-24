@@ -24,6 +24,10 @@ The CLI is pretty straight forward.
   - e.g. 'lfspull -r "**/*.tgz"' downloads all .tgz files this folder and all subfolders
 - '-b / --random-bytes [RANDOM_BYTES]' for temp file name. See https://docs.rs/tempfile/latest/tempfile/struct.Builder.html#method.rand_bytes
 - '-a / --access-token [TOKEN]' sets the token - can also be set via $ACCESS_TOKEN from env
+- '-m / --max-retry [NUMBER]' max number of download attempts if fail
+- '-t / --timeout [NUMBER]' set timeout in seconds for git lfs pull request
+  - When None given, the timeout is calculated automatically based on lfs object size
+  - When 0 given, there is no timeout
 - '-v' for verbose mode
 
 ## Library API guide
@@ -36,6 +40,7 @@ Please see our docs.rs for example code and the gherkin tests for how to check t
 
 - add rust-toolchain 1.88
 - read git config for lfs storage path
+- add timeout
 
 ### 0.4.0
 
