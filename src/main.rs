@@ -22,9 +22,19 @@ struct Args {
     #[clap(short = 'b', long)]
     random_bytes: Option<usize>,
 
+    ///max number of retry attempt when http request fails
+    #[clap(short, long, default_value_t = 3)]
+    max_retry: u32,
+
     /// Print debug information
     #[clap(short, long)]
     verbose: bool,
+
+    ///timeout in seconds for git lfs pull request
+    ///When None given, the timeout is calculated automatically based on lfs object size
+    ///When 0 given, there is no timeout
+    #[clap(short, long)]
+    timeout: Option<u64>,
 }
 
 #[tokio::main]
@@ -48,14 +58,26 @@ pub async fn main() -> Result<(), LFSError> {
     let access_token = args.access_token.as_deref();
     if let Some(file) = args.file_to_pull {
         info!("Single file mode: {}", file.to_string_lossy());
-        let result = lfspull::pull_file(file, access_token, args.random_bytes).await?;
+        let result = lfspull::pull_file(
+            file,
+            access_token,
+            args.max_retry,
+            args.random_bytes,
+            args.timeout,
+        )
+        .await?;
         info!("Result: {}", result);
     }
     if let Some(recurse_pattern) = args.recurse_pattern {
         info!("Glob-recurse mode: {}", &recurse_pattern);
-        let results =
-            lfspull::glob_recurse_pull_directory(&recurse_pattern, access_token, args.random_bytes)
-                .await?;
+        let results = lfspull::glob_recurse_pull_directory(
+            &recurse_pattern,
+            access_token,
+            args.max_retry,
+            args.random_bytes,
+            args.timeout,
+        )
+        .await?;
         info!("Pulling finished! Listing files and sources: ");
 
         results.into_iter().enumerate().for_each(|(id, (n, r))| {
