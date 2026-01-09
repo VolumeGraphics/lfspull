@@ -140,7 +140,7 @@ async fn get_file_cached<P: AsRef<Path>>(
     if cache_file.is_file() {
         Ok((cache_file, FilePullMode::UsedLocalCache))
     } else {
-        fat_io_wrap_tokio(cache_dir, fs::create_dir_all)
+        fat_io_wrap_tokio(&cache_dir, fs::create_dir_all)
             .await
             .map_err(|_| {
                 LFSError::DirectoryTraversalError(
@@ -155,6 +155,7 @@ async fn get_file_cached<P: AsRef<Path>>(
             max_retry,
             randomizer_bytes,
             timeout,
+            Some(cache_dir),
         )
         .await?;
         if cache_file.exists() {

@@ -36,6 +36,11 @@ Please see our docs.rs for example code and the gherkin tests for how to check t
 
 ## Changelog
 
+### 0.4.2
+
+- create temp file in the cached folder instead of working directory
+- update dependencies
+
 ### 0.4.1
 
 - add rust-toolchain 1.88
