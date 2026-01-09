@@ -231,6 +231,7 @@ pub async fn pull_file<P: AsRef<Path>>(
         lfs_file.as_ref().to_string_lossy()
     );
     fat_io_wrap_tokio(&lfs_file, fs::remove_file).await?;
+    info!("file deleted");
     fs::hard_link(&file_name_cached, lfs_file)
         .await
         .map_err(|e| FatIOError::from_std_io_err(e, file_name_cached.clone()))?;
