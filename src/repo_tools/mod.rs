@@ -272,9 +272,11 @@ async fn are_paths_on_same_devices(
 ) -> Result<bool, LFSError> {
     use std::path::Component;
 
-    fn get_root(path: &Path) -> Option<Component> {
-        path.components()
-            .find(|&element| element == Component::RootDir)
+    fn get_root(path: &Path) -> Option<String> {
+        path.components().find_map(|element| match element {
+            Component::Prefix(prefix) => Some(prefix.as_os_str().to_string_lossy().to_string()),
+            _ => None,
+        })
     }
 
     let source = source.as_ref().canonicalize().map_err(|e| {
@@ -427,5 +429,15 @@ mod tests {
         let repo_url_https =
             remote_url_ssh_to_https(REPO_REMOTE_HTTPS.to_string()).expect("Could not parse url");
         assert_eq!(repo_url_https.as_str(), REPO_REMOTE_HTTPS);
+    }
+
+    #[tokio::test]
+    async fn test_test() {
+        let _ = are_paths_on_same_devices(
+            "C:\\Users\\adinata.wijaya\\Downloads\\linux",
+            "C:\\Users\\adinata.wijaya\\Downloads\\linux",
+        )
+        .await
+        .unwrap();
     }
 }
