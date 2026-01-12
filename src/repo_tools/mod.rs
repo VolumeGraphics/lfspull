@@ -201,11 +201,13 @@ pub async fn pull_file<P: AsRef<Path>>(
     randomizer_bytes: Option<usize>,
     timeout: Option<u64>,
 ) -> Result<FilePullMode, LFSError> {
-    info!("Pulling file {}", lfs_file.as_ref().to_string_lossy());
+    let lfs_file = lfs_file.as_ref();
+
+    info!("Pulling file {}", lfs_file.to_string_lossy());
     if !primitives::is_lfs_node_file(&lfs_file).await? {
         info!(
             "File ({}) not an lfs-node file - pulled already.",
-            lfs_file.as_ref().file_name().unwrap().to_string_lossy()
+            lfs_file.file_name().unwrap().to_string_lossy()
         );
         return Ok(FilePullMode::WasAlreadyPresent);
     }
@@ -228,13 +230,24 @@ pub async fn pull_file<P: AsRef<Path>>(
     info!(
         "Found file (Origin: {:?}), linking to {}",
         origin,
-        lfs_file.as_ref().to_string_lossy()
+        lfs_file.to_string_lossy()
     );
+
+    let is_of_same_root = are_paths_on_same_devices(&file_name_cached, lfs_file).await?;
     fat_io_wrap_tokio(&lfs_file, fs::remove_file).await?;
-    info!("file deleted");
-    fs::hard_link(&file_name_cached, lfs_file)
-        .await
-        .map_err(|e| FatIOError::from_std_io_err(e, file_name_cached.clone()))?;
+
+    if is_of_same_root {
+        info!("Setting hard link");
+        fs::hard_link(&file_name_cached, lfs_file)
+            .await
+            .map_err(|e| FatIOError::from_std_io_err(e, file_name_cached.clone()))?;
+    } else {
+        info!("Copying file");
+        fs::copy(&file_name_cached, lfs_file)
+            .await
+            .map_err(|e| FatIOError::from_std_io_err(e, file_name_cached.clone()))?;
+    }
+
     Ok(origin)
 }
 
@@ -250,6 +263,58 @@ fn glob_recurse(wildcard_pattern: &str) -> Result<Vec<PathBuf>, LFSError> {
         })?);
     }
     Ok(return_vec)
+}
+
+#[cfg(windows)]
+async fn are_paths_on_same_devices(
+    source: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+) -> Result<bool, LFSError> {
+    use std::path::Component;
+
+    fn get_root(path: &Path) -> Option<Component> {
+        path.components()
+            .find(|&element| element == Component::RootDir)
+    }
+
+    let source = source.as_ref().canonicalize().map_err(|e| {
+        LFSError::DirectoryTraversalError(format!(
+            "Problem getting the absolute path of {}: {}",
+            source.as_ref().to_string_lossy(),
+            e.to_string().as_str()
+        ))
+    })?;
+    let target = target.as_ref().canonicalize().map_err(|e| {
+        LFSError::DirectoryTraversalError(format!(
+            "Problem getting the absolute path of {}: {}",
+            target.as_ref().to_string_lossy(),
+            e.to_string().as_str()
+        ))
+    })?;
+
+    let source_root = get_root(&source);
+    let target_root = get_root(&target);
+
+    Ok(source_root == target_root)
+}
+
+#[cfg(unix)]
+async fn are_paths_on_same_devices(
+    source: impl AsRef<Path>,
+    target: impl AsRef<Path>,
+) -> Result<bool, LFSError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let source = source.as_ref();
+    let target = target.as_ref();
+    let meta_source = fs::metadata(source).await.map_err(|_| {
+        LFSError::DirectoryTraversalError("Could not get device information".to_string())
+    })?;
+    let meta_target = fs::metadata(target).await.map_err(|_| {
+        LFSError::DirectoryTraversalError("Could not get device information".to_string())
+    })?;
+
+    Ok(meta_source.dev() == meta_target.dev())
 }
 
 /// Pulls a glob recurse expression

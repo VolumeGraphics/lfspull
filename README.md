@@ -39,6 +39,7 @@ Please see our docs.rs for example code and the gherkin tests for how to check t
 ### 0.4.2
 
 - create temp file in the cached folder instead of working directory
+- detect whether cached file and repo are in the same drive/device. If yes, use hard link, if not, file will be copied
 
 ### 0.4.1
 
