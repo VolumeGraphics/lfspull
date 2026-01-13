@@ -430,14 +430,4 @@ mod tests {
             remote_url_ssh_to_https(REPO_REMOTE_HTTPS.to_string()).expect("Could not parse url");
         assert_eq!(repo_url_https.as_str(), REPO_REMOTE_HTTPS);
     }
-
-    #[tokio::test]
-    async fn test_test() {
-        let _ = are_paths_on_same_devices(
-            "C:\\Users\\adinata.wijaya\\Downloads\\linux",
-            "C:\\Users\\adinata.wijaya\\Downloads\\linux",
-        )
-        .await
-        .unwrap();
-    }
 }
