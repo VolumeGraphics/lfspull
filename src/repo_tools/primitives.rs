@@ -121,11 +121,12 @@ fn url_with_auth(url: &str, access_token: Option<&str>) -> Result<Url, LFSError>
     Ok(url)
 }
 
-pub async fn handle_download(
+async fn handle_download(
     meta_data: &MetaData,
     repo_remote_url: &str,
     access_token: Option<&str>,
     randomizer_bytes: Option<usize>,
+    temp_dir: &Option<impl AsRef<Path>>,
 ) -> Result<NamedTempFile, LFSError> {
     const MEDIA_TYPE: &str = "application/vnd.git-lfs+json";
     let client = Client::builder().build()?;
@@ -192,8 +193,14 @@ pub async fn handle_download(
     debug!("creating temp file in current dir");
 
     const TEMP_SUFFIX: &str = ".lfstmp";
-    const TEMP_FOLDER: &str = "./";
-    let tmp_path = PathBuf::from(TEMP_FOLDER).join(format!("{}{TEMP_SUFFIX}", &meta_data.oid));
+
+    let temp_dir = if let Some(dir) = temp_dir {
+        dir.as_ref()
+    } else {
+        Path::new("./")
+    };
+
+    let tmp_path = PathBuf::from(temp_dir).join(format!("{}{TEMP_SUFFIX}", &meta_data.oid));
     if randomizer_bytes.is_none() && tmp_path.exists() {
         debug!("temp file exists. Deleting");
         fat_io_wrap_tokio(&tmp_path, fs::remove_file).await?;
@@ -202,7 +209,7 @@ pub async fn handle_download(
         .prefix(&meta_data.oid)
         .suffix(TEMP_SUFFIX)
         .rand_bytes(randomizer_bytes.unwrap_or_default())
-        .tempfile_in(TEMP_FOLDER)
+        .tempfile_in(temp_dir)
         .map_err(|e| LFSError::TempFile(e.to_string()))?;
 
     debug!("created tempfile: {:?}", &temp_file);
@@ -246,11 +253,18 @@ pub async fn download_file(
     max_retry: u32,
     randomizer_bytes: Option<usize>,
     connection_timeout: Option<u64>,
+    temp_dir: Option<impl AsRef<Path>>,
 ) -> Result<NamedTempFile, LFSError> {
     let effective_timeout = get_effective_timeout(connection_timeout, meta_data.size);
     for attempt in 1..=max_retry {
         debug!("Download attempt {attempt}");
-        let download = handle_download(meta_data, repo_remote_url, access_token, randomizer_bytes);
+        let download = handle_download(
+            meta_data,
+            repo_remote_url,
+            access_token,
+            randomizer_bytes,
+            &temp_dir,
+        );
         let result = if let Some(seconds) = effective_timeout {
             timeout(Duration::from_secs(seconds), download).await
         } else {
@@ -383,7 +397,7 @@ size 226848"#;
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn try_pull_from_demo_repo() {
         let parsed = parse_lfs_string(LFS_TEST_DATA).expect("Could not parse demo-string!");
-        let temp_file = download_file(&parsed, URL, None, 3, None, Some(0))
+        let temp_file = download_file(&parsed, URL, None, 3, None, Some(0), None::<&str>)
             .await
             .expect("could not download file");
         let temp_size = temp_file
