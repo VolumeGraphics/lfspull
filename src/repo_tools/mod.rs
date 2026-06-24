@@ -28,16 +28,27 @@ async fn get_remote_url_from_file(git_file: impl AsRef<Path>) -> Result<String, 
     Ok(remote_url.to_owned())
 }
 
+/// Parse the `gitdir: <path>` line of a linked-worktree `.git` file and return the
+/// referenced path.
+///
+/// The `gitdir:` prefix is stripped explicitly rather than by splitting on ':',
+/// because a Windows path contains a second colon in its drive letter (e.g. `D:`).
+/// Splitting on every ':' would discard the drive and yield an unresolvable,
+/// drive-less path such as `/repo/.git/worktrees/wt`.
+fn parse_worktree_gitdir(git_file_contents: &str) -> Option<&str> {
+    git_file_contents
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("gitdir:"))
+        .map(str::trim)
+}
+
 async fn get_real_repo_root<P: AsRef<Path>>(repo_path: P) -> Result<PathBuf, LFSError> {
     let git_path = repo_path.as_ref().join(".git");
     let real_git_path = if repo_path.as_ref().join(".git").is_file() {
         //worktree case
         let worktree_file_contents = fat_io_wrap_tokio(git_path, read_to_string).await?;
-        let worktree_path = worktree_file_contents
-            .split(':')
-            .find(|c| c.contains(".git"))
-            .expect("Could not resolve original repo .git/config file from worktree .git file")
-            .trim();
+        let worktree_path = parse_worktree_gitdir(&worktree_file_contents)
+            .expect("Could not resolve original repo .git/config file from worktree .git file");
         get_repo_root(worktree_path)
             .await
             .expect("Found worktree, but couldn't resolve root-repo")
@@ -361,6 +372,38 @@ pub async fn glob_recurse_pull_directory(
 mod tests {
     use super::*;
     use tracing::error;
+
+    #[test]
+    fn parse_worktree_gitdir_preserves_windows_drive_letter() {
+        let contents = "gitdir: D:/vg/master/source/.git/worktrees/source4\n";
+        assert_eq!(
+            parse_worktree_gitdir(contents),
+            Some("D:/vg/master/source/.git/worktrees/source4")
+        );
+    }
+
+    #[test]
+    fn parse_worktree_gitdir_handles_unix_path() {
+        let contents = "gitdir: /home/user/repo/.git/worktrees/wt\n";
+        assert_eq!(
+            parse_worktree_gitdir(contents),
+            Some("/home/user/repo/.git/worktrees/wt")
+        );
+    }
+
+    #[test]
+    fn parse_worktree_gitdir_handles_backslashes_and_crlf() {
+        let contents = "gitdir: C:\\repo\\.git\\worktrees\\wt\r\n";
+        assert_eq!(
+            parse_worktree_gitdir(contents),
+            Some("C:\\repo\\.git\\worktrees\\wt")
+        );
+    }
+
+    #[test]
+    fn parse_worktree_gitdir_returns_none_without_prefix() {
+        assert_eq!(parse_worktree_gitdir("not a gitdir line\n"), None);
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_glob_directory() {
