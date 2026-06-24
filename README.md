@@ -36,6 +36,10 @@ Please see our docs.rs for example code and the gherkin tests for how to check t
 
 ## Changelog
 
+### 0.4.3
+
+- fix parsing of windows worktree gitdir drive letter
+
 ### 0.4.2
 
 - create temp file in the cached folder instead of working directory
